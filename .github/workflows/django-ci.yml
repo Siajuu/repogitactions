@@ -82,3 +82,28 @@ jobs:
 
       - name: isort --check
         run: isort --check .
+
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pobranie kodu repozytorium
+        uses: actions/checkout@v4
+
+      - name: Instalacja Pythona 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalacja zależności
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install bandit pip-audit
+
+      - name: bandit (statyczna analiza kodu)
+        run: bandit -r . -x ./venv,./core/migrations -ll
+
+      - name: pip-audit (skan podatnych zależności)
+        run: pip-audit -r requirements.txt
