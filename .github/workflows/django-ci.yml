@@ -107,3 +107,61 @@ jobs:
 
       - name: pip-audit (skan podatnych zależności)
         run: pip-audit -r requirements.txt
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [test, lint, security]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+
+    steps:
+      - name: Pobranie kodu repozytorium
+        uses: actions/checkout@v4
+
+      - name: Logowanie do GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Budowanie i pushowanie obrazu Docker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Deploy na serwer
+        run: |
+          echo "Obraz ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} zostal zbudowany i wypchniety."
+          echo "TODO: docelowy krok SSH/deploy na serwer - uzupelnic po skonfigurowaniu serwera."
+          echo "Przykladowy szkielet (do odkomentowania i uzupelnienia sekretow):"
+          echo "# uses: appleboy/ssh-action@v1"
+          echo "# with:"
+          echo "#   host: \${{ secrets.DEPLOY_HOST }}"
+          echo "#   username: \${{ secrets.DEPLOY_USER }}"
+          echo "#   key: \${{ secrets.DEPLOY_SSH_KEY }}"
+          echo "#   script: |"
+          echo "#     docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo "#     docker stop django-app || true"
+          echo "#     docker rm django-app || true"
+          echo "#     docker run -d --name django-app -p 80:8000 \\"
+          echo "#       ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
+      - name: Podsumowanie wdrożenia
+        run: |
+          echo "### Deploy zakonczony" >> $GITHUB_STEP_SUMMARY
+          echo "- Obraz: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Rollback: uzyj tagu :latest poprzedniego commita lub ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:<poprzedni_sha>" >> $GITHUB_STEP_SUMMARY
