@@ -119,11 +119,13 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository }}
 
     steps:
       - name: Pobranie kodu repozytorium
         uses: actions/checkout@v4
+
+      - name: Ustawienie nazwy obrazu malymi literami
+        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
       - name: Logowanie do GitHub Container Registry
         uses: docker/login-action@v3
