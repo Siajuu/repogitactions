@@ -147,18 +147,19 @@ jobs:
         run: |
           echo "Obraz ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} zostal zbudowany i wypchniety."
           echo "TODO: docelowy krok SSH/deploy na serwer - uzupelnic po skonfigurowaniu serwera."
-          echo "Przykladowy szkielet (do odkomentowania i uzupelnienia sekretow):"
-          echo "# uses: appleboy/ssh-action@v1"
-          echo "# with:"
-          echo "#   host: \${{ secrets.DEPLOY_HOST }}"
-          echo "#   username: \${{ secrets.DEPLOY_USER }}"
-          echo "#   key: \${{ secrets.DEPLOY_SSH_KEY }}"
-          echo "#   script: |"
-          echo "#     docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          echo "#     docker stop django-app || true"
-          echo "#     docker rm django-app || true"
-          echo "#     docker run -d --name django-app -p 80:8000 \\"
-          echo "#       ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          cat <<'SHELL_EOF'
+          Przykladowy szkielet (do odkomentowania i uzupelnienia sekretow):
+          # uses: appleboy/ssh-action@v1
+          # with:
+          #   host: ${{ secrets.DEPLOY_HOST }}
+          #   username: ${{ secrets.DEPLOY_USER }}
+          #   key: ${{ secrets.DEPLOY_SSH_KEY }}
+          #   script: |
+          #     docker pull ghcr.io/OWNER/REPO:SHA
+          #     docker stop django-app || true
+          #     docker rm django-app || true
+          #     docker run -d --name django-app -p 80:8000 ghcr.io/OWNER/REPO:SHA
+          SHELL_EOF
 
       - name: Podsumowanie wdrożenia
         run: |
