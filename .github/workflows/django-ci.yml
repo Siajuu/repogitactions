@@ -34,3 +34,31 @@ jobs:
 
       - name: Uruchomienie testów
         run: python manage.py test
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pobranie kodu repozytorium
+        uses: actions/checkout@v4
+
+      - name: Instalacja Pythona 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalacja zależności
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 black isort
+
+      - name: flake8
+        run: flake8 .
+
+      - name: black --check
+        run: black --check .
+
+      - name: isort --check
+        run: isort --check .
