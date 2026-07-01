@@ -1,0 +1,237 @@
+name: Django CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      SECRET_KEY: ${{ secrets.SECRET_KEY }}
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: test_db
+      DB_USER: test_user
+      DB_PASSWORD: test_password
+      DB_HOST: localhost
+      DB_PORT: 5432
+
+    steps:
+      - name: Pobranie kodu repozytorium
+        uses: actions/checkout@v4
+
+      - name: Instalacja Pythona 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalacja zależności
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Wykonanie migracji
+        run: python manage.py migrate
+
+      - name: Uruchomienie testów
+        run: python manage.py test core.tests.SanityCheckTests
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pobranie kodu repozytorium
+        uses: actions/checkout@v4
+
+      - name: Instalacja Pythona 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalacja zależności
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 black isort
+
+      - name: flake8
+        run: flake8 .
+
+      - name: black --check
+        run: black --check .
+
+      - name: isort --check
+        run: isort --check .
+
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pobranie kodu repozytorium
+        uses: actions/checkout@v4
+
+      - name: Instalacja Pythona 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalacja zależności
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install bandit pip-audit
+
+      - name: bandit (statyczna analiza kodu)
+        run: bandit -r . -x ./venv,./core/migrations -ll
+
+      - name: pip-audit (skan podatnych zależności)
+        run: pip-audit -r requirements.txt
+
+  celery-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      SECRET_KEY: ${{ secrets.SECRET_KEY }}
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/0
+
+    steps:
+      - name: Pobranie kodu repozytorium
+        uses: actions/checkout@v4
+
+      - name: Instalacja Pythona 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Instalacja zależności
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Wykonanie migracji
+        run: python manage.py migrate
+
+      - name: Uruchomienie workera Celery w tle
+        run: |
+          celery -A config worker --loglevel=info --pool=solo \
+            > celery_worker.log 2>&1 &
+          echo $! > celery_worker.pid
+          sleep 5
+
+      - name: Sprawdzenie czy worker wystartował
+        run: |
+          if ! kill -0 "$(cat celery_worker.pid)" 2>/dev/null; then
+            echo "Worker Celery nie wystartowal poprawnie."
+            cat celery_worker.log
+            exit 1
+          fi
+          echo "Worker Celery dziala."
+
+      - name: Uruchomienie testów tasków asynchronicznych
+        run: python manage.py test core.tests.CeleryTaskTests
+
+      - name: Logi workera Celery
+        if: always()
+        run: cat celery_worker.log
+
+      - name: Zatrzymanie workera Celery
+        if: always()
+        run: |
+          if [ -f celery_worker.pid ]; then
+            kill "$(cat celery_worker.pid)" 2>/dev/null || true
+          fi
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [test, lint, security]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      REGISTRY: ghcr.io
+
+    steps:
+      - name: Pobranie kodu repozytorium
+        uses: actions/checkout@v4
+
+      - name: Ustawienie nazwy obrazu malymi literami
+        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      - name: Logowanie do GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Budowanie i pushowanie obrazu Docker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Deploy na serwer
+        run: |
+          echo "Obraz ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} zostal zbudowany i wypchniety."
+          echo "TODO: docelowy krok SSH/deploy na serwer - uzupelnic po skonfigurowaniu serwera."
+          cat <<'SHELL_EOF'
+          Przykladowy szkielet (do odkomentowania i uzupelnienia sekretow):
+          # uses: appleboy/ssh-action@v1
+          # with:
+          #   host: ${{ secrets.DEPLOY_HOST }}
+          #   username: ${{ secrets.DEPLOY_USER }}
+          #   key: ${{ secrets.DEPLOY_SSH_KEY }}
+          #   script: |
+          #     docker pull ghcr.io/OWNER/REPO:SHA
+          #     docker stop django-app || true
+          #     docker rm django-app || true
+          #     docker run -d --name django-app -p 80:8000 ghcr.io/OWNER/REPO:SHA
+          SHELL_EOF
+
+      - name: Podsumowanie wdrożenia
+        run: |
+          echo "### Deploy zakonczony" >> $GITHUB_STEP_SUMMARY
+          echo "- Obraz: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Rollback: uzyj tagu :latest poprzedniego commita lub ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:<poprzedni_sha>" >> $GITHUB_STEP_SUMMARY
